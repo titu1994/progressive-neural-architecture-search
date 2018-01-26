@@ -1,0 +1,109 @@
+import numpy as np
+import csv
+
+import tensorflow as tf
+from keras import backend as K
+from keras.datasets import cifar10
+from keras.utils import to_categorical
+
+from encoder import Encoder, StateSpace
+from manager import NetworkManager
+from model import model_fn
+
+# create a shared session between Keras and Tensorflow
+policy_sess = tf.Session()
+K.set_session(policy_sess)
+
+B = 3  # number of blocks in each cell
+K_ = 30  # number of children networks to train
+
+MAX_EPOCHS = 1  # maximum number of epochs to train
+BATCHSIZE = 128  # batchsize
+REGULARIZATION = 1e-3  # regularization strength
+CONTROLLER_CELLS = 100  # number of cells in RNN controller
+RESTORE_CONTROLLER = True  # restore controller to continue training
+
+operators = None # ['3x3 dconv', '3x3 maxpool']
+
+# construct a state space
+state_space = StateSpace(B=B, operators=operators)
+
+# print the state space being searched
+state_space.print_state_space()
+NUM_TRAILS = state_space.print_total_models(K_)
+
+# prepare the training data for the NetworkManager
+(x_train, y_train), (x_test, y_test) = cifar10.load_data()
+x_train = x_train.astype('float32') / 255.
+x_test = x_test.astype('float32') / 255.
+y_train = to_categorical(y_train, 10)
+y_test = to_categorical(y_test, 10)
+
+dataset = [x_train, y_train, x_test, y_test]  # pack the dataset for the NetworkManager
+
+with policy_sess.as_default():
+    # create the Encoder and build the internal policy network
+    controller = Encoder(policy_sess, state_space, B=B, K=K_,
+                         reg_param=REGULARIZATION,
+                         controller_cells=CONTROLLER_CELLS,
+                         restore_controller=RESTORE_CONTROLLER)
+
+# create the Network Manager
+manager = NetworkManager(dataset, epochs=MAX_EPOCHS, batchsize=BATCHSIZE)
+print()
+
+# train for number of trails
+for trial in range(B):
+    with policy_sess.as_default():
+        K.set_session(policy_sess)
+
+        if trial == 0:
+            k = None
+        else:
+            k = K_
+
+        actions = controller.get_actions(top_k=k)  # get all actions for the previous state
+
+    # remove excess input statements (only ip1 = ip2 = -2) since I am not using the others
+    # cuts down on number of models to train initially by 4x
+    action_ids = []  # leave this line as empty or remove from below update call
+    # temp_actions = []
+    # for id, action in enumerate(actions):
+    #     parse = state_space.parse_state_space_list(action)
+    #     if parse[0] == -2 and parse[2] == -2:
+    #         temp_actions.append(action)
+    #         action_ids.append(id)
+    #
+    # actions = temp_actions
+
+    rewards = []
+    for t, action in enumerate(actions):
+        # print the action probabilities
+        state_space.print_actions(action)
+        print("Model #%d / #%d" % (t + 1, len(actions)))
+        print("Predicted actions : ", state_space.parse_state_space_list(action))
+
+        # build a model, train and get reward and accuracy from the network manager
+        reward = manager.get_rewards(model_fn, state_space.parse_state_space_list(action))
+        print("Final Accuracy : ", reward)
+
+        rewards.append(reward)
+        print("\nFinished %d out of %d models ! \n" % (t + 1, len(actions)))
+
+        # write the results of this trial into a file
+        with open('train_history.csv', mode='a+', newline='') as f:
+            data = [reward]
+            data.extend(state_space.parse_state_space_list(action))
+            writer = csv.writer(f)
+            writer.writerow(data)
+
+    with policy_sess.as_default():
+        K.set_session(policy_sess)
+        # train the controller on the saved state and the discounted rewards
+        loss = controller.train_step(rewards, children_ids=action_ids)
+        print("Trial %d: Encoder loss : %0.6f" % (trial + 1, loss))
+
+        controller.update_step()
+        print()
+
+print("Finished !")
