@@ -15,18 +15,19 @@ policy_sess = tf.Session()
 K.set_session(policy_sess)
 
 B = 3  # number of blocks in each cell
-K_ = 30  # number of children networks to train
+K_ = 96  # number of children networks to train
 
 MAX_EPOCHS = 1  # maximum number of epochs to train
 BATCHSIZE = 128  # batchsize
-REGULARIZATION = 1e-3  # regularization strength
+REGULARIZATION = 0  # regularization strength
 CONTROLLER_CELLS = 100  # number of cells in RNN controller
 RESTORE_CONTROLLER = True  # restore controller to continue training
 
-operators = None # ['3x3 dconv', '3x3 maxpool']
+operators = ['3x3 dconv', '5x5 dconv', '7x7 dconv',
+             '1x7-7x1 conv', '3x3 maxpool', '3x3 avgpool']  # use the default set of operators, minus identity and conv 3x3
 
 # construct a state space
-state_space = StateSpace(B=B, operators=operators)
+state_space = StateSpace(B, input_lookback_depth=0, operators=operators)
 
 # print the state space being searched
 state_space.print_state_space()
@@ -64,18 +65,6 @@ for trial in range(B):
 
         actions = controller.get_actions(top_k=k)  # get all actions for the previous state
 
-    # remove excess input statements (only ip1 = ip2 = -2) since I am not using the others
-    # cuts down on number of models to train initially by 4x
-    action_ids = []  # leave this line as empty or remove from below update call
-    # temp_actions = []
-    # for id, action in enumerate(actions):
-    #     parse = state_space.parse_state_space_list(action)
-    #     if parse[0] == -2 and parse[2] == -2:
-    #         temp_actions.append(action)
-    #         action_ids.append(id)
-    #
-    # actions = temp_actions
-
     rewards = []
     for t, action in enumerate(actions):
         # print the action probabilities
@@ -100,7 +89,7 @@ for trial in range(B):
     with policy_sess.as_default():
         K.set_session(policy_sess)
         # train the controller on the saved state and the discounted rewards
-        loss = controller.train_step(rewards, children_ids=action_ids)
+        loss = controller.train_step(rewards)
         print("Trial %d: Encoder loss : %0.6f" % (trial + 1, loss))
 
         controller.update_step()

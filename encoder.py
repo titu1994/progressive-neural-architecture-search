@@ -7,6 +7,7 @@ from keras import backend as K
 import tensorflow as tf
 
 import os
+
 if not os.path.exists('weights/'):
     os.makedirs('weights/')
 
@@ -20,7 +21,41 @@ class StateSpace:
 
     Also provides a more convenient way to define the search space
     '''
-    def __init__(self, B, operators=None):
+
+    def __init__(self, B, input_lookback_depth=-2, operators=None):
+        '''
+        Constructs a search space which models the NAS and PNAS papers
+
+        A single block consists of the 4-tuple:
+        (input 1, operation 1, input 2, operation 2)
+
+        The merge operation can be a sum or a concat as required.
+
+        The input operations are used for adding up intermediate values
+        inside the same cell. See the NASNet and P-NASNet models to see
+        how intermediate blocks connect based on input values.
+
+        The default operation values are based on the P-NAS paper. They
+        should be changed as needed.
+
+        # Note:
+        This only provides a convenient mechanism to train the networks.
+        It is upto the model designer to interpret this block tuple
+        information and construct the final model.
+
+        # Args:
+            B: Maximum number of blocks
+            input_lookback_depth: should be a negative number or 0.
+                Describes how many cells the input should look behind.
+                Can be used to tensor information from 0 or more cells from
+                the current cell.
+
+                The negative number describes how many cells to look back.
+                Set to 0 if the lookback feature is not needed (flat cells).
+            operators: a list of operations (can be anything, must be
+                interpreted by the model designer when constructing the
+                actual model. Usually a list of strings.
+        '''
         self.states = OrderedDict()
         self.state_count_ = 0
 
@@ -35,7 +70,9 @@ class StateSpace:
         else:
             self.operators = operators
 
-        input_values = list(range(-2, self.B))  # -2 = Hc-2, -1 = Hc-1, 0-(B-1) = Hci
+        self.input_lookback_depth = input_lookback_depth
+        input_values = list(range(input_lookback_depth, self.B))  # -2 = Hc-2, -1 = Hc-1, 0-(B-1) = Hci
+
         self._add_state('inputs', values=input_values)  # -2 = Hc-2, -1 = Hc-1
         self._add_state('ops', values=self.operators)
         self.prepare_initial_children()
@@ -136,6 +173,15 @@ class StateSpace:
         return state_values
 
     def one_hot_encode_child(self, child):
+        '''
+        Perform one hot encoding for all blocks in a cell
+
+        Args:
+            child: a list of blocks (which forms one cell / layer)
+
+        Returns:
+            list of one hot encoded blocks of the cell
+        '''
         encoded_child = []
         for i, val in enumerate(child):
             encoded_child.append(self.one_hot_encode(i % 2, val))
@@ -143,8 +189,18 @@ class StateSpace:
         return encoded_child
 
     def prepare_initial_children(self):
-        inputs = [-2, -1]
+        '''
+        Prepare the initial set of child models which must
+        all be trained to obtain the initial set of scores
+        '''
+        # set of all operations
         ops = list(range(len(self.operators)))
+        inputs = list(range(self.input_lookback_depth, 0))
+
+        # if input_lookback_depth == 0, then we need to adjust to have at least
+        # one input (generally 0)
+        if len(inputs) == 0:
+            inputs = [0]
 
         print()
         print("Obtaining search space for b = 1")
@@ -154,10 +210,24 @@ class StateSpace:
         self.children = list(self._construct_permutations(search_space))
 
     def prepare_intermediate_children(self, new_b):
-        new_ip_values = list(range(-2, new_b))
+        '''
+        Generates the intermediate product of the previous children
+        and the current generation of children.
+
+        Note: This is a very long step and can take an enormous amount
+        of time !
+
+        Args:
+            new_b: the number of blocks in current stage
+
+        Returns:
+            a generator that produces a joint of the previous and current
+            child models
+        '''
+        new_ip_values = list(range(self.input_lookback_depth, new_b))
         ops = list(range(len(self.operators)))
 
-        child_count = ((2 + new_b - 1) ** 2) * (len(self.operators) ** 2)
+        child_count = ((len(new_ip_values)) ** 2) * (len(self.operators) ** 2)
         print()
         print("Obtaining search space for b = %d" % new_b)
         print("Search space size : ", child_count)
@@ -210,7 +280,9 @@ class StateSpace:
         return self.state_count_
 
     def print_total_models(self, K):
-        level1 = 2 * 2 * (len(self.operators) ** 2)
+        ''' Compute the total number of models to generate and train '''
+        num_inputs = 1 if self.input_lookback_depth == 0 else abs(self.input_lookback_depth)
+        level1 = (num_inputs ** 2) * (len(self.operators) ** 2)
         remainder = (self.B - 1) * K
         total = level1 + remainder
 
@@ -219,11 +291,11 @@ class StateSpace:
         return total
 
 
-
 class Encoder:
     '''
     Utility class to manage the RNN Encoder
     '''
+
     def __init__(self, policy_session, state_space,
                  B=5, K=256,
                  reg_param=0.001,
@@ -234,7 +306,7 @@ class Encoder:
         self.state_space = state_space  # type: StateSpace
         self.state_size = self.state_space.size
 
-        self.b_ = 0
+        self.b_ = 1
         self.B = B
         self.K = K
 
@@ -273,7 +345,6 @@ class Encoder:
 
             with tf.name_scope('controller'):
                 with tf.variable_scope('policy_network'):
-
                     # state input is the first input fed into the controller RNN.
                     # the rest of the inputs are fed to the RNN internally
                     with tf.name_scope('state_input'):
@@ -341,28 +412,21 @@ class Encoder:
                     print("Loading Encoder Checkpoint !")
                     self.saver.restore(self.policy_session, path)
 
-    def train_step(self, rewards, children_ids=[]):
+    def train_step(self, rewards):
         '''
         Perform a single train step on the Encoder RNN
 
         Returns:
-            the training loss
+            final training loss
         '''
-        #assert len(rewards) == len(self.state_space.children)
-
-        if children_ids is not None and len(children_ids) == 0:
-            children = self.state_space.children  # take all the children
-        else:
-            children = []
-            for id in range(len(self.state_space.children)):
-                if id in children_ids:
-                    children.append(self.state_space.children[id])
+        children = self.state_space.children  # take all the children
 
         for id, (child, score) in enumerate(zip(children, rewards)):
             state_list = self.state_space.one_hot_encode_child(child)
             state_list = np.concatenate(state_list, axis=-1)
             state_list = state_list.reshape((1, -1, 1))
 
+            # feed in the child model and the score
             feed_dict = {
                 self.state_input: state_list,
                 self.labels: np.array([[score]]),
@@ -382,6 +446,10 @@ class Encoder:
         return loss
 
     def update_step(self):
+        '''
+        Updates the children from the intermediate products for the next generation
+        of larger number of blocks in each cell
+        '''
         if self.b_ + 1 <= self.B:
             with self.policy_session.as_default():
                 K.set_session(self.policy_session)
@@ -389,11 +457,13 @@ class Encoder:
                 self.b_ += 1
                 models_scores = []
 
+                # iterate through all the intermediate children
                 for i, intermediate_child in enumerate(self.state_space.prepare_intermediate_children(self.b_)):
                     state_list = self.state_space.one_hot_encode_child(intermediate_child)
                     state_list = np.concatenate(state_list, axis=-1)
                     state_list = state_list.reshape((1, -1, 1))
 
+                    # score the child
                     feed_dict = {
                         self.state_input: state_list,
                     }
@@ -401,6 +471,7 @@ class Encoder:
                     score = self.policy_session.run(self.rnn_score, feed_dict=feed_dict)
                     score = score[0, 0]
 
+                    # preserve the child and its score
                     models_scores.append([intermediate_child, score])
 
                     with open('scores_%d.csv' % (self.b_), mode='a+', newline='') as f:
@@ -412,14 +483,16 @@ class Encoder:
                     if (i + 1) % 500 == 0:
                         print("Scored %d models. Current model score = %0.4f" % (i + 1, score))
 
+                # sort the children according to their score
                 models_scores = sorted(models_scores, key=lambda x: x[1], reverse=True)
 
+                # take only the K highest scoring children for next iteration
                 children = []
                 for i in range(self.K):
                     children.append(models_scores[i][0])
 
+                # save these children for next round
                 self.state_space.update_children(children)
         else:
             print()
             print("No more updates necessary as max B has been reached !")
-

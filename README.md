@@ -11,7 +11,9 @@ Basic implementation of Encoder RNN from [Progressive Neural Architecture Search
 At a high level : For full training details, please see `train.py`.
 ```python
 # construct a state space (the default operators are from the paper)
-state_space = StateSpace(B, operators=None)  # B = number of blocks in each cell
+state_space = StateSpace(B, # B = number of blocks in each cell
+                         input_lookback_depth=0, # how far to look back for the inputs
+                         operators=None) # whether to use custom operators or the default ones
 
 # create the managers
 controller = Encoder(tf_session, state_space, B, K)  # K = number of children networks to train after initial step
