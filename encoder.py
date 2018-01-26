@@ -204,7 +204,7 @@ class StateSpace:
 
         print()
         print("Obtaining search space for b = 1")
-        print("Search space size : ", (4 * (len(self.operators) ** 2)))
+        print("Search space size : ", (len(inputs) * (len(self.operators) ** 2)))
 
         search_space = [inputs, ops, inputs, ops]
         self.children = list(self._construct_permutations(search_space))
@@ -227,10 +227,14 @@ class StateSpace:
         new_ip_values = list(range(self.input_lookback_depth, new_b))
         ops = list(range(len(self.operators)))
 
-        child_count = ((len(new_ip_values)) ** 2) * (len(self.operators) ** 2)
+        new_child_count = ((len(new_ip_values)) ** 2) * (len(self.operators) ** 2)
         print()
         print("Obtaining search space for b = %d" % new_b)
-        print("Search space size : ", child_count)
+        print("Search space size : ", new_child_count)
+
+        print()
+        print("Total models to evaluate : ", (len(self.children) * new_child_count))
+        print()
 
         search_space = [new_ip_values, ops, new_ip_values, ops]
         new_search_space = list(self._construct_permutations(search_space))
