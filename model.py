@@ -1,6 +1,7 @@
 import numpy as np
 from keras.models import Model
 from keras.layers import Input, Dense, Conv2D, GlobalAveragePooling2D, Activation, SeparableConv2D, MaxPool2D, AveragePooling2D, concatenate
+from keras.layers import BatchNormalization
 from keras import backend as K
 
 # generic model design
@@ -33,25 +34,41 @@ def parse_action(ip, filters, action, strides=(1, 1)):
     '''
     # applies a 3x3 separable conv
     if action == '3x3 dconv':
-        return SeparableConv2D(filters, (3, 3), strides=strides, padding='same', activation='relu')(ip)
+        x = SeparableConv2D(filters, (3, 3), strides=strides, padding='same')(ip)
+        x = BatchNormalization()(x)
+        x = Activation('relu')(x)
+        return x
 
     # applies a 5x5 separable conv
     if action == '5x5 dconv':
-        return SeparableConv2D(filters, (5, 5), strides=strides, padding='same', activation='relu')(ip)
+        x = SeparableConv2D(filters, (5, 5), strides=strides, padding='same')(ip)
+        x = BatchNormalization()(x)
+        x = Activation('relu')(x)
+        return x
 
     # applies a 7x7 separable conv
     if action == '7x7 dconv':
-        return SeparableConv2D(filters, (5, 5), strides=strides, padding='same', activation='relu')(ip)
+        x = SeparableConv2D(filters, (7, 7), strides=strides, padding='same')(ip)
+        x = BatchNormalization()(x)
+        x = Activation('relu')(x)
+        return x
 
     # applies a 1x7 and then a 7x1 standard conv operation
     if action == '1x7-7x1 conv':
-        x = Conv2D(filters, (1, 7), strides=strides, padding='same', activation='relu')(ip)
-        x = Conv2D(filters, (7, 1), strides=(1, 1), padding='same', activation='relu')(x)
+        x = Conv2D(filters, (1, 7), strides=strides, padding='same')(ip)
+        x = BatchNormalization()(x)
+        x = Activation('relu')(x)
+        x = Conv2D(filters, (7, 1), strides=(1, 1), padding='same')(x)
+        x = BatchNormalization()(x)
+        x = Activation('relu')(x)
         return x
 
     # applies a 3x3 standard conv
     if action == '3x3 conv':
-        return Conv2D(filters, (3, 3), strides=strides, padding='same', activation='relu')(ip)
+        x = Conv2D(filters, (3, 3), strides=strides, padding='same')(ip)
+        x = BatchNormalization()(x)
+        x = Activation('relu')(x)
+        return x
 
     # applies a 3x3 maxpool
     if action == '3x3 maxpool':
@@ -65,7 +82,10 @@ def parse_action(ip, filters, action, strides=(1, 1)):
     if strides == (2, 2):
         channel_axis = 1 if K.image_data_format() == 'channels_first' else -1
         input_filters = K.int_shape(ip)[channel_axis]
-        return Conv2D(input_filters, (1, 1), strides=strides, padding='same', activation='relu')(ip)
+        x = Conv2D(input_filters, (1, 1), strides=strides, padding='same')(ip)
+        x = BatchNormalization()(x)
+        x = Activation('relu')(x)
+        return x
     else:
         # else just submits a linear layer if shapes match
         return Activation('linear')(ip)

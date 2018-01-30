@@ -1,4 +1,5 @@
 import numpy as np
+import time
 import pprint
 import csv
 from collections import OrderedDict
@@ -11,6 +12,9 @@ import os
 if not os.path.exists('weights/'):
     os.makedirs('weights/')
 
+if not os.path.exists('logs/'):
+    os.makedirs('logs/')
+
 
 class StateSpace:
     '''
@@ -22,7 +26,7 @@ class StateSpace:
     Also provides a more convenient way to define the search space
     '''
 
-    def __init__(self, B, input_lookback_depth=-2, operators=None):
+    def __init__(self, B, operators, input_lookback_depth=-1, input_lookforward_depth=None):
         '''
         Constructs a search space which models the NAS and PNAS papers
 
@@ -45,6 +49,9 @@ class StateSpace:
 
         # Args:
             B: Maximum number of blocks
+            operators: a list of operations (can be anything, must be
+                interpreted by the model designer when constructing the
+                actual model. Usually a list of strings.
             input_lookback_depth: should be a negative number or 0.
                 Describes how many cells the input should look behind.
                 Can be used to tensor information from 0 or more cells from
@@ -52,9 +59,13 @@ class StateSpace:
 
                 The negative number describes how many cells to look back.
                 Set to 0 if the lookback feature is not needed (flat cells).
-            operators: a list of operations (can be anything, must be
-                interpreted by the model designer when constructing the
-                actual model. Usually a list of strings.
+            input_lookforward_depth: sets a limit on input depth that can be looked forward.
+                This is useful for scenarios where "flat" models are preferred,
+                wherein each cell is flat, though it may take input from deeper
+                layers (if the designer so chooses)
+
+                The default searches over cells which can have inter-connections.
+                Setting it to 0 limits this to just the current input for that cell (flat cells).
         '''
         self.states = OrderedDict()
         self.state_count_ = 0
@@ -71,9 +82,11 @@ class StateSpace:
             self.operators = operators
 
         self.input_lookback_depth = input_lookback_depth
-        input_values = list(range(input_lookback_depth, self.B))  # -2 = Hc-2, -1 = Hc-1, 0-(B-1) = Hci
+        self.input_lookforward_depth = input_lookforward_depth
 
-        self._add_state('inputs', values=input_values)  # -2 = Hc-2, -1 = Hc-1
+        input_values = list(range(input_lookback_depth, self.B))  # -1 = Hc-1, 0-(B-1) = Hci
+
+        self._add_state('inputs', values=input_values)
         self._add_state('ops', values=self.operators)
         self.prepare_initial_children()
 
@@ -224,8 +237,16 @@ class StateSpace:
             a generator that produces a joint of the previous and current
             child models
         '''
+        if self.input_lookforward_depth is not None:
+            new_b = min(self.input_lookforward_depth, new_b)
+
         new_ip_values = list(range(self.input_lookback_depth, new_b))
         ops = list(range(len(self.operators)))
+
+        # if input_lookback_depth == 0, then we need to adjust to have at least
+        # one input (generally 0)
+        if len(new_ip_values) == 0:
+            new_ip_values = [0]
 
         new_child_count = ((len(new_ip_values)) ** 2) * (len(self.operators) ** 2)
         print()
@@ -404,7 +425,11 @@ class Encoder:
                     self.train_op = self.optimizer.minimize(self.total_loss, global_step=self.global_step)
 
             self.summaries_op = tf.summary.merge_all()
-            self.summary_writer = tf.summary.FileWriter('logs', graph=self.policy_session.graph)
+
+            timestr = time.strftime("%Y-%m-%d-%H-%M-%S")
+            filename = 'logs/%s' % timestr
+
+            self.summary_writer = tf.summary.FileWriter(filename, graph=self.policy_session.graph)
 
             self.policy_session.run(tf.global_variables_initializer())
             self.saver = tf.train.Saver(max_to_keep=1)

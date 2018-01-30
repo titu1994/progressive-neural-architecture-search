@@ -12,8 +12,10 @@ At a high level : For full training details, please see `train.py`.
 ```python
 # construct a state space (the default operators are from the paper)
 state_space = StateSpace(B, # B = number of blocks in each cell
-                         input_lookback_depth=0, # how far to look back for the inputs
-                         operators=None) # whether to use custom operators or the default ones
+                         operators=None # whether to use custom operators or the default ones from the paper
+                         input_lookback_depth=0, # limit number of combined inputs from previous cell
+                         input_lookforward_depth=0, # limit number of combined inputs in same cell
+                         )
 
 # create the managers
 controller = Encoder(tf_session, state_space, B, K)  # K = number of children networks to train after initial step
