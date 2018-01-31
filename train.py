@@ -21,6 +21,7 @@ MAX_EPOCHS = 5  # maximum number of epochs to train
 BATCHSIZE = 128  # batchsize
 REGULARIZATION = 0  # regularization strength
 CONTROLLER_CELLS = 100  # number of cells in RNN controller
+RNN_TRAINING_EPOCHS = 10
 RESTORE_CONTROLLER = True  # restore controller to continue training
 
 operators = ['3x3 dconv', '5x5 dconv', '7x7 dconv',
@@ -46,6 +47,7 @@ dataset = [x_train, y_train, x_test, y_test]  # pack the dataset for the Network
 with policy_sess.as_default():
     # create the Encoder and build the internal policy network
     controller = Encoder(policy_sess, state_space, B=B, K=K_,
+                         train_iterations=RNN_TRAINING_EPOCHS,
                          reg_param=REGULARIZATION,
                          controller_cells=CONTROLLER_CELLS,
                          restore_controller=RESTORE_CONTROLLER)

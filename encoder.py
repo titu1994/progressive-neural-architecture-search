@@ -323,6 +323,7 @@ class Encoder:
 
     def __init__(self, policy_session, state_space,
                  B=5, K=256,
+                 train_iterations=10,
                  reg_param=0.001,
                  controller_cells=32,
                  restore_controller=False):
@@ -335,6 +336,7 @@ class Encoder:
         self.B = B
         self.K = K
 
+        self.train_iterations = train_iterations
         self.controller_cells = controller_cells
         self.reg_strength = reg_param
         self.restore_controller = restore_controller
@@ -398,12 +400,12 @@ class Encoder:
 
             with tf.name_scope('optimizer'):
                 self.global_step = tf.Variable(0, trainable=False)
-                starter_learning_rate = 0.1
+                starter_learning_rate = 0.001
                 learning_rate = tf.train.exponential_decay(starter_learning_rate, self.global_step,
-                                                           500, 0.95, staircase=True)
+                                                           500, 0.98, staircase=True)
 
                 tf.summary.scalar('learning_rate', learning_rate)
-                self.optimizer = tf.train.RMSPropOptimizer(learning_rate=learning_rate)
+                self.optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
 
             policy_net_variables = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='policy_network')
 
@@ -448,29 +450,36 @@ class Encoder:
         Returns:
             final training loss
         '''
-        children = self.state_space.children  # take all the children
+        children = np.array(self.state_space.children, dtype=np.object)  # take all the children
+        rewards = np.array(rewards, dtype=np.float32)
+        loss = 0
 
-        for id, (child, score) in enumerate(zip(children, rewards)):
-            state_list = self.state_space.one_hot_encode_child(child)
-            state_list = np.concatenate(state_list, axis=-1)
-            state_list = state_list.reshape((1, -1, 1))
+        for _ in range(self.train_iterations):
+            ids = np.array(list(range(len(rewards))))
+            np.random.shuffle(ids)
 
-            # feed in the child model and the score
-            feed_dict = {
-                self.state_input: state_list,
-                self.labels: np.array([[score]]),
-            }
+            for id, (child, score) in enumerate(zip(children[ids], rewards[ids])):
+                child = child.tolist()
+                state_list = self.state_space.one_hot_encode_child(child)
+                state_list = np.concatenate(state_list, axis=-1)
+                state_list = state_list.reshape((1, -1, 1))
 
-            with self.policy_session.as_default():
-                K.set_session(self.policy_session)
+                # feed in the child model and the score
+                feed_dict = {
+                    self.state_input: state_list,
+                    self.labels: score.reshape((1, 1)),
+                }
 
-                _, loss, summary, global_step = self.policy_session.run(
-                    [self.train_op, self.total_loss, self.summaries_op,
-                     self.global_step],
-                    feed_dict=feed_dict)
+                with self.policy_session.as_default():
+                    K.set_session(self.policy_session)
 
-                self.summary_writer.add_summary(summary, global_step)
-                self.saver.save(self.policy_session, save_path='weights/controller.ckpt', global_step=self.global_step)
+                    _, loss, summary, global_step = self.policy_session.run(
+                        [self.train_op, self.total_loss, self.summaries_op,
+                         self.global_step],
+                        feed_dict=feed_dict)
+
+                    self.summary_writer.add_summary(summary, global_step)
+                    self.saver.save(self.policy_session, save_path='weights/controller.ckpt', global_step=self.global_step)
 
         return loss
 

@@ -35,14 +35,13 @@ manager = NetworkManager(dataset, epochs=max_epochs, batchsize=batchsize)
 This is a very limited project.
 - It is not a faithful re-implementation of the original paper. There are several small details not incorporated (like bias initialization, actually using the Hc-2 - Hcb-1 values etc)
 - It doesnt have support for skip connections via 'anchor points' etc. (though it may not be that hard to implement it as a special state)
-- Learning rate, regularization strength etc are all random values (which make somewhat sense to me)
+- Learning rate, number of epochs to train per B_i, regularization strength etc are all random values (which make somewhat sense to me)
 - Single GPU model only. There would need to be a **lot** of modifications to this for multi GPU training (and I have just 1)
 
 # Result
-I tried a toy CNN model with 2 CNN cells the default search space, train for just 1 epoch of training on CIFAR-10.
+I tried a toy CNN model with 2 CNN cells the a custom search space, train for just 5 epoch of training on CIFAR-10.
 
-The top score was for the model `0.3766,-1,1x7-7x1 conv,-1,1x7-7x1 conv`, which obtained slightly higher score than `0.3663,-1,1x7-7x1 conv,-1,3x3 avgpool,0,3x3 avgpool,0,3x3 avgpool,-2,1x7-7x1 conv,-2,1x7-7x1 conv`
-This may have just been due to training noise, since it was trained for just 1 epoch.
+The top 5 models are available using the `rank_architectures.py` script to parse train_history.csv.
 
 <img src="https://github.com/titu1994/progressive-neural-architecture-search/blob/master/images/losses.PNG?raw=true" height=100% width=100%>
 
