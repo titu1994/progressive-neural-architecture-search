@@ -1,5 +1,7 @@
 import os
 import argparse
+import matplotlib.pyplot as plt
+plt.style.use('seaborn-paper')
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-f', type=str, default=None, help='Path to file to score')
@@ -31,7 +33,16 @@ with open(file, 'r') as f:
 for i in range(len(lines)):
     lines[i][0] = float(lines[i][0])
 
+points = list(range(len(lines)))
+scores = [line[0] for line in lines]
+
 lines = sorted(lines, key=lambda x: x[0], reverse=True)
 
 for line in lines:
     print(line[0], line[1:])
+
+plt.scatter(points, scores)
+plt.xlabel('Model Index')
+plt.ylabel('val-acc')
+plt.title('Accuracy over all trained models')
+plt.show()
