@@ -238,9 +238,11 @@ class StateSpace:
             child models
         '''
         if self.input_lookforward_depth is not None:
-            new_b = min(self.input_lookforward_depth, new_b)
+            new_b_dash = min(self.input_lookforward_depth, new_b)
+        else:
+            new_b_dash = new_b
 
-        new_ip_values = list(range(self.input_lookback_depth, new_b))
+        new_ip_values = list(range(self.input_lookback_depth, new_b_dash))
         ops = list(range(len(self.operators)))
 
         # if input_lookback_depth == 0, then we need to adjust to have at least
@@ -340,6 +342,9 @@ class Encoder:
         self.controller_cells = controller_cells
         self.reg_strength = reg_param
         self.restore_controller = restore_controller
+
+        self.children_history = None
+        self.score_history = None
 
         self.build_policy_network()
 
@@ -454,32 +459,60 @@ class Encoder:
         rewards = np.array(rewards, dtype=np.float32)
         loss = 0
 
-        for _ in range(self.train_iterations):
-            ids = np.array(list(range(len(rewards))))
-            np.random.shuffle(ids)
+        if self.children_history is None:
+            self.children_history = children
+            self.score_history = rewards
+            batchsize = len(rewards)
+        else:
+            self.children_history = np.array((self.children_history, children))
+            self.score_history = np.array((self.score_history, rewards))
+            batchsize = sum([data.shape[0] for data in self.score_history])
 
-            for id, (child, score) in enumerate(zip(children[ids], rewards[ids])):
-                child = child.tolist()
-                state_list = self.state_space.one_hot_encode_child(child)
-                state_list = np.concatenate(state_list, axis=-1)
-                state_list = state_list.reshape((1, -1, 1))
+        train_size = batchsize * self.train_iterations
+        print("Controller: Number of training steps required for this stage : %d" % (train_size))
+        print()
 
-                # feed in the child model and the score
-                feed_dict = {
-                    self.state_input: state_list,
-                    self.labels: score.reshape((1, 1)),
-                }
+        for current_epoch in range(self.train_iterations):
+            print("Controller: Begin training epoch %d" % (current_epoch + 1))
+            print()
 
-                with self.policy_session.as_default():
-                    K.set_session(self.policy_session)
+            for dataset_id in range(self.b_):
+                if self.b_ == 1:  # only 1st phase has proceeded, extract directly
+                    children = self.children_history
+                    scores = self.score_history
+                else:
+                    children = self.children_history[dataset_id]
+                    scores = self.score_history[dataset_id]
 
-                    _, loss, summary, global_step = self.policy_session.run(
-                        [self.train_op, self.total_loss, self.summaries_op,
-                         self.global_step],
-                        feed_dict=feed_dict)
+                ids = np.array(list(range(len(scores))))
+                np.random.shuffle(ids)
 
-                    self.summary_writer.add_summary(summary, global_step)
-                    self.saver.save(self.policy_session, save_path='weights/controller.ckpt', global_step=self.global_step)
+                print("Controller: Begin training - B = %d" % (dataset_id + 1))
+
+                for id, (child, score) in enumerate(zip(children[ids], scores[ids])):
+                    child = child.tolist()
+                    state_list = self.state_space.one_hot_encode_child(child)
+                    state_list = np.concatenate(state_list, axis=-1)
+                    state_list = state_list.reshape((1, -1, 1))
+
+                    # feed in the child model and the score
+                    feed_dict = {
+                        self.state_input: state_list,
+                        self.labels: score.reshape((1, 1)),
+                    }
+
+                    with self.policy_session.as_default():
+                        K.set_session(self.policy_session)
+
+                        _, loss, summary, global_step = self.policy_session.run(
+                            [self.train_op, self.total_loss, self.summaries_op,
+                             self.global_step],
+                            feed_dict=feed_dict)
+
+                        self.summary_writer.add_summary(summary, global_step)
+                        self.saver.save(self.policy_session, save_path='weights/controller.ckpt', global_step=self.global_step)
+
+                print("Controller: Finished training epoch %d / %d of B = %d / %d" % (current_epoch + 1, self.train_iterations, dataset_id + 1, self.b_))
 
         return loss
 
@@ -524,9 +557,12 @@ class Encoder:
                 # sort the children according to their score
                 models_scores = sorted(models_scores, key=lambda x: x[1], reverse=True)
 
+                # account for case where there are fewer children than K
+                children_count = min(self.K, len(models_scores))
+
                 # take only the K highest scoring children for next iteration
                 children = []
-                for i in range(self.K):
+                for i in range(children_count):
                     children.append(models_scores[i][0])
 
                 # save these children for next round
