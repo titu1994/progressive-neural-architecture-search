@@ -86,6 +86,8 @@ class StateSpace:
 
         input_values = list(range(input_lookback_depth, self.B))  # -1 = Hc-1, 0-(B-1) = Hci
 
+        self.embedding_max = -1
+
         self._add_state('inputs', values=input_values)
         self._add_state('ops', values=self.operators)
         self.prepare_initial_children()
@@ -113,6 +115,10 @@ class StateSpace:
         index_map = {}
         for i, val in enumerate(values):
             index_map[i] = val
+
+            # required for embedding
+            if i > self.embedding_max:
+                self.embedding_max = i
 
         value_map = {}
         for i, val in enumerate(values):
@@ -328,6 +334,7 @@ class Encoder:
                  train_iterations=10,
                  reg_param=0.001,
                  controller_cells=32,
+                 embedding_dim=20,
                  restore_controller=False):
         self.policy_session = policy_session  # type: tf.Session
 
@@ -337,6 +344,7 @@ class Encoder:
         self.b_ = 1
         self.B = B
         self.K = K
+        self.embedding_dim = embedding_dim
 
         self.train_iterations = train_iterations
         self.controller_cells = controller_cells
@@ -380,16 +388,23 @@ class Encoder:
                     # state input is the first input fed into the controller RNN.
                     # the rest of the inputs are fed to the RNN internally
                     with tf.name_scope('state_input'):
-                        state_input = tf.placeholder(dtype=tf.float32, shape=(1, None, 1), name='state_input')
+                        # state_input = tf.placeholder(dtype=tf.float32, shape=(1, None, 1), name='state_input')
+                        state_input = tf.placeholder(dtype=tf.int32, shape=(None, None), name='state_input')
 
                     self.state_input = state_input
+
+                    with tf.name_scope('embedding'):
+                        embedding_weights = tf.get_variable('state_embeddings',
+                                                     shape=[self.state_space.embedding_max, self.embedding_dim],
+                                                     initializer=tf.initializers.random_uniform(-1., 1.))
+                        embeddings = tf.nn.embedding_lookup(embedding_weights, state_input)
 
                     # we can use LSTM as the controller as well
                     lstm_cell = tf.nn.rnn_cell.LSTMCell(self.controller_cells)
                     cell_state = lstm_cell.zero_state(batch_size=1, dtype=tf.float32)
 
                     # initially, cell input will be 1st state input
-                    cell_input = state_input
+                    cell_input = embeddings
 
                     # we provide a flat list of chained input-output to the RNN
                     with tf.name_scope('controller_input'):
@@ -460,12 +475,12 @@ class Encoder:
         loss = 0
 
         if self.children_history is None:
-            self.children_history = children
-            self.score_history = rewards
-            batchsize = len(rewards)
+            self.children_history = [children]
+            self.score_history = [rewards]
+            batchsize = rewards.shape[0]
         else:
-            self.children_history = np.array((self.children_history, children))
-            self.score_history = np.array((self.score_history, rewards))
+            self.children_history.append(children)
+            self.score_history.append(rewards)
             batchsize = sum([data.shape[0] for data in self.score_history])
 
         train_size = batchsize * self.train_iterations
@@ -477,12 +492,8 @@ class Encoder:
             print()
 
             for dataset_id in range(self.b_):
-                if self.b_ == 1:  # only 1st phase has proceeded, extract directly
-                    children = self.children_history
-                    scores = self.score_history
-                else:
-                    children = self.children_history[dataset_id]
-                    scores = self.score_history[dataset_id]
+                children = self.children_history[dataset_id]
+                scores = self.score_history[dataset_id]
 
                 ids = np.array(list(range(len(scores))))
                 np.random.shuffle(ids)
@@ -492,8 +503,7 @@ class Encoder:
                 for id, (child, score) in enumerate(zip(children[ids], scores[ids])):
                     child = child.tolist()
                     state_list = self.state_space.one_hot_encode_child(child)
-                    state_list = np.concatenate(state_list, axis=-1)
-                    state_list = state_list.reshape((1, -1, 1))
+                    state_list = np.concatenate(state_list, axis=-1).astype('int32')
 
                     # feed in the child model and the score
                     feed_dict = {
@@ -531,8 +541,7 @@ class Encoder:
                 # iterate through all the intermediate children
                 for i, intermediate_child in enumerate(self.state_space.prepare_intermediate_children(self.b_)):
                     state_list = self.state_space.one_hot_encode_child(intermediate_child)
-                    state_list = np.concatenate(state_list, axis=-1)
-                    state_list = state_list.reshape((1, -1, 1))
+                    state_list = np.concatenate(state_list, axis=-1).astype('int32')
 
                     # score the child
                     feed_dict = {
