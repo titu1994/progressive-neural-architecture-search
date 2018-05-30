@@ -139,14 +139,14 @@ class StateSpace:
 
     def embedding_encode(self, id, value):
         '''
-        One hot encode the specific state value
+        Embedding index encode the specific state value
 
         Args:
             id: global id of the state
             value: state value
 
         Returns:
-            one hot encoded representation of the state value
+            embedding encoded representation of the state value
         '''
         state = self[id]
         size = state['size']
