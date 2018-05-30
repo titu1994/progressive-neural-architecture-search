@@ -137,7 +137,7 @@ class StateSpace:
 
         return self.state_count_ - 1
 
-    def one_hot_encode(self, id, value):
+    def embedding_encode(self, id, value):
         '''
         One hot encode the specific state value
 
@@ -154,7 +154,7 @@ class StateSpace:
         value_idx = value_map[value]
 
         one_hot = np.zeros((1, size), dtype=np.float32)
-        one_hot[np.arange(1), value_idx] = 1.0
+        one_hot[np.arange(1), value_idx] = value_idx + 1
         return one_hot
 
     def get_state_value(self, id, index):
@@ -203,7 +203,7 @@ class StateSpace:
         '''
         encoded_child = []
         for i, val in enumerate(child):
-            encoded_child.append(self.one_hot_encode(i % 2, val))
+            encoded_child.append(self.embedding_encode(i % 2, val))
 
         return encoded_child
 
@@ -394,8 +394,9 @@ class Encoder:
                     self.state_input = state_input
 
                     with tf.name_scope('embedding'):
+                        # embedding max + 1 is done as 0th position should be the "default" value for that time step
                         embedding_weights = tf.get_variable('state_embeddings',
-                                                     shape=[self.state_space.embedding_max, self.embedding_dim],
+                                                     shape=[self.state_space.embedding_max + 1, self.embedding_dim],
                                                      initializer=tf.initializers.random_uniform(-1., 1.))
                         embeddings = tf.nn.embedding_lookup(embedding_weights, state_input)
 
