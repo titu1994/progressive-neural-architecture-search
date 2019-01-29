@@ -1,11 +1,11 @@
-# Progressive Neural Architecture Search with Encoder RNN
+# Progressive Neural Architecture Search with ControllerManager RNN
 
-Basic implementation of Encoder RNN from [Progressive Neural Architecture Search](https://arxiv.org/abs/1712.00559).
+Basic implementation of ControllerManager RNN from [Progressive Neural Architecture Search](https://arxiv.org/abs/1712.00559).
 
-- Uses Keras to define and train children / generated networks, which are found via sequential model-based optimization in Tensorflow, ranked by the Encoder RNN.
-- Define a state space by using `StateSpace`, a manager which maintains input states and handles communication between the Encoder RNN and the user.
-- `Encoder` manages the training and evaluation of the Encoder RNN
-- `NetworkManager` handles the training and reward computation of the children Keras model
+- Uses tf.keras to define and train children / generated networks, which are found via sequential model-based optimization in Tensorflow, ranked by the Controller RNN.
+- Define a state space by using `StateSpace`, a manager which maintains input states and handles communication between the ControllerManager RNN and the user.
+- `ControllerManager` manages the training and evaluation of the Controller RNN
+- `NetworkManager` handles the training and reward computation of the children models
 
 # Usage
 At a high level : For full training details, please see `train.py`.
@@ -18,7 +18,7 @@ state_space = StateSpace(B, # B = number of blocks in each cell
                          )
 
 # create the managers
-controller = Encoder(tf_session, state_space, B, K)  # K = number of children networks to train after initial step
+controller = ControllerManager(state_space, B, K)  # K = number of children networks to train after initial step
 manager = NetworkManager(dataset, epochs=max_epochs, batchsize=batchsize)
 
 # For `B` number of trials
@@ -41,13 +41,13 @@ This is a very limited project.
 # Result
 I tried a toy CNN model with 2 CNN cells the a custom search space, train for just 5 epoch of training on CIFAR-10.
 
-The top 5 models are available using the `rank_architectures.py` script to parse train_history.csv.
+All models configuration strings can be ranked using `rank_architectures.py` script to parse train_history.csv, or you can use
+`score_architectures.py` to pseudo-score all combinations of models for all values of B, and then pass these onto `rank_architectures.py` to approximate the scores that they would obtain.
 
-<img src="https://github.com/titu1994/progressive-neural-architecture-search/blob/master/images/losses.PNG?raw=true" height=100% width=100%>
 
 # Requirements
-- Keras >= 2.1.2
-- Tensorflow-gpu >= 1.2
+- Tensorflow-gpu >= 1.12
+- Scikit-learn (most recent available from pip)
 
 # Acknowledgements
 Code somewhat inspired by [wallarm/nascell-automl](https://github.com/wallarm/nascell-automl)

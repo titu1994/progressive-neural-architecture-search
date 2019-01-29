@@ -110,6 +110,6 @@ venv.bak/
 logs/*
 
 # Weights
-weights/*
+temp_weights/*
 logs/*
 scores_*.csv

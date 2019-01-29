@@ -1,16 +1,26 @@
 import numpy as np
+import shutil
+import os
+import tqdm
 
-from keras.models import Model
-from keras import backend as K
-from keras.optimizers import Adam
-from keras.callbacks import ModelCheckpoint
 import tensorflow as tf
+from tensorflow.contrib.eager.python import tfe
+from tensorflow.python.keras.models import Model
+from tensorflow.python.keras.callbacks import ModelCheckpoint
+
+
+if not os.path.exists('temp_weights/'):
+    os.makedirs('temp_weights/')
+else:
+    shutil.rmtree('temp_weights')
+    os.makedirs('temp_weights/', exist_ok=True)
+
 
 class NetworkManager:
     '''
     Helper class to manage the generation of subnetwork training given a dataset
     '''
-    def __init__(self, dataset, epochs=5, batchsize=128):
+    def __init__(self, dataset, epochs=5, batchsize=128, learning_rate=0.001):
         '''
         Manager which is tasked with creating subnetworks, training them on a dataset, and retrieving
         rewards in the term of accuracy, which is passed to the controller RNN.
@@ -19,15 +29,14 @@ class NetworkManager:
             dataset: a tuple of 4 arrays (X_train, y_train, X_val, y_val)
             epochs: number of epochs to train the subnetworks
             batchsize: batchsize of training the subnetworks
-            acc_beta: exponential weight for the accuracy
-            clip_rewards: whether to clip rewards in [-0.05, 0.05] range to prevent
-                large weight updates. Use when training is highly unstable.
+            learning_rate: learning rate for the Optimizer.
         '''
         self.dataset = dataset
         self.epochs = epochs
         self.batchsize = batchsize
+        self.lr = learning_rate
 
-    def get_rewards(self, model_fn, actions):
+    def get_rewards(self, model_fn, actions, display_model_summary=True):
         '''
         Creates a subnetwork given the actions predicted by the controller RNN,
         trains it on the provided dataset, and then returns a reward.
@@ -36,6 +45,7 @@ class NetworkManager:
             model_fn: a function which accepts one argument, a list of
                 parsed actions, obtained via an inverse mapping from the
                 StateSpace.
+
             actions: a list of parsed actions obtained via an inverse mapping
                 from the StateSpace. It is in a specific order as given below:
 
@@ -50,41 +60,116 @@ class NetworkManager:
 
                 These action values are for direct use in the construction of models.
 
+            display_model_summary: Display the child model summary at the end of training.
+
         Returns:
             a reward for training a model with the given actions
         '''
-        with tf.Session(graph=tf.Graph()) as network_sess:
-            K.set_session(network_sess)
+        # with tf.Session(graph=tf.Graph()) as network_sess:
+        #     K.set_session(network_sess)
 
-            # generate a submodel given predicted actions
+        if tf.test.is_gpu_available():
+            device = '/gpu:0'
+        else:
+            device = '/cpu:0'
+
+        tf.keras.backend.reset_uids()
+
+        # generate a submodel given predicted actions
+        with tf.device(device):
             model = model_fn(actions)  # type: Model
-            optimizer = Adam(lr=1e-3, amsgrad=True)
-            model.compile(optimizer, 'categorical_crossentropy', metrics=['accuracy'])
 
-            # unpack the dataset
+            # build model shapes
             X_train, y_train, X_val, y_val = self.dataset
 
-            # train the model using Keras methods
-            model.fit(X_train, y_train, batch_size=self.batchsize, epochs=self.epochs,
-                      verbose=1, validation_data=(X_val, y_val),
-                      callbacks=[ModelCheckpoint('weights/temp_network.h5',
-                                                 monitor='val_acc', verbose=1,
-                                                 save_best_only=True,
-                                                 save_weights_only=True)])
+            train_dataset = tf.data.Dataset.from_tensor_slices((X_train, y_train))
+            train_dataset = train_dataset.apply(tf.data.experimental.shuffle_and_repeat(10000, seed=0))
+            train_dataset = train_dataset.batch(self.batchsize)
+            train_dataset = train_dataset.apply(tf.data.experimental.prefetch_to_device(device))
 
-            # load best performance epoch in this training session
-            model.load_weights('weights/temp_network.h5')
+            val_dataset = tf.data.Dataset.from_tensor_slices((X_val, y_val))
+            val_dataset = val_dataset.batch(self.batchsize)
+            val_dataset = val_dataset.apply(tf.data.experimental.prefetch_to_device(device))
 
-            # evaluate the model
-            loss, acc = model.evaluate(X_val, y_val, batch_size=self.batchsize)
+            num_train_batches = X_train.shape[0] // self.batchsize + 1
+            global_step = tf.train.get_or_create_global_step()
 
-            # compute the reward
-            reward = acc
+            lr = tf.train.cosine_decay(self.lr, global_step, decay_steps=num_train_batches * self.epochs, alpha=0.1)
+            optimizer = tf.train.AdamOptimizer(lr)
 
-            print()
-            print("Manager: Accuracy = ", reward)
+            saver = tf.train.Checkpoint(model=model, optimizer=optimizer, global_step=global_step)
+
+            best_val_acc = 0.0
+
+            for epoch in range(self.epochs):
+                # train model
+                with tqdm.tqdm(train_dataset,
+                               desc='Train Epoch (%d / %d): ' % (epoch + 1, self.epochs),
+                               total=num_train_batches) as iterator:
+
+                    for i, (x, y) in enumerate(iterator):
+                        # get gradients
+                        with tf.GradientTape() as tape:
+                            preds = model(x, training=True)
+                            loss = tf.keras.losses.categorical_crossentropy(y, preds)
+
+                        grad = tape.gradient(loss, model.variables)
+                        grad_vars = zip(grad, model.variables)
+
+                        optimizer.apply_gradients(grad_vars, global_step)
+
+                        if (i + 1) >= num_train_batches:
+                            break
+
+                print()
+                # evaluate model
+                acc = tfe.metrics.CategoricalAccuracy()
+
+                for j, (x, y) in enumerate(val_dataset):
+                    preds = model(x, training=False)
+                    acc(y, preds)
+
+                acc = acc.result().numpy()
+
+                print("Epoch %d: Val accuracy = %0.6f" % (epoch + 1, acc))
+
+                # if acc improved, save the weights
+                if acc > best_val_acc:
+                    print("Val accuracy improved from %0.6f to %0.6f. Saving weights !" % (
+                        best_val_acc, acc))
+
+                    best_val_acc = acc
+                    saver.save('temp_weights/temp_network')
+
+                print()
+
+            # load best weights
+            path = tf.train.latest_checkpoint('temp_weights/')
+
+            saver.restore(path)
+
+            if display_model_summary:
+                model.summary()
+
+            # evaluate the best weights
+            acc = tfe.metrics.CategoricalAccuracy()
+
+            for j, (x, y) in enumerate(val_dataset):
+                preds = model(x, training=False)
+                acc(y, preds)
+
+            acc = acc.result().numpy()
+
+        # compute the reward
+        reward = acc
+
+        print()
+        print("Manager: Accuracy = ", reward)
 
         # clean up resources and GPU memory
-        network_sess.close()
+        # network_sess.close()
+        del model
+        del optimizer
+        del global_step
 
         return reward

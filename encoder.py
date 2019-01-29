@@ -4,8 +4,8 @@ import pprint
 import csv
 from collections import OrderedDict
 
-from keras import backend as K
 import tensorflow as tf
+import tensorflow.contrib.summary
 
 import os
 
@@ -26,7 +26,9 @@ class StateSpace:
     Also provides a more convenient way to define the search space
     '''
 
-    def __init__(self, B, operators, input_lookback_depth=-1, input_lookforward_depth=None):
+    def __init__(self, B, operators,
+                 input_lookback_depth=-1,
+                 input_lookforward_depth=None):
         '''
         Constructs a search space which models the NAS and PNAS papers
 
@@ -49,9 +51,11 @@ class StateSpace:
 
         # Args:
             B: Maximum number of blocks
+
             operators: a list of operations (can be anything, must be
                 interpreted by the model designer when constructing the
                 actual model. Usually a list of strings.
+
             input_lookback_depth: should be a negative number or 0.
                 Describes how many cells the input should look behind.
                 Can be used to tensor information from 0 or more cells from
@@ -59,6 +63,7 @@ class StateSpace:
 
                 The negative number describes how many cells to look back.
                 Set to 0 if the lookback feature is not needed (flat cells).
+
             input_lookforward_depth: sets a limit on input depth that can be looked forward.
                 This is useful for scenarios where "flat" models are preferred,
                 wherein each cell is flat, though it may take input from deeper
@@ -86,7 +91,8 @@ class StateSpace:
 
         input_values = list(range(input_lookback_depth, self.B))  # -1 = Hc-1, 0-(B-1) = Hci
 
-        self.embedding_max = -1
+        self.inputs_embedding_max = len(input_values)
+        self.operator_embedding_max = len(np.unique(operators))
 
         self._add_state('inputs', values=input_values)
         self._add_state('ops', values=self.operators)
@@ -95,7 +101,7 @@ class StateSpace:
     def _add_state(self, name, values):
         '''
         Adds a "state" to the state manager, along with some metadata for efficient
-        packing and unpacking of information required by the RNN Encoder.
+        packing and unpacking of information required by the RNN ControllerManager.
 
         Stores metadata such as:
         -   Global ID
@@ -115,10 +121,6 @@ class StateSpace:
         index_map = {}
         for i, val in enumerate(values):
             index_map[i] = val
-
-            # required for embedding
-            if i > self.embedding_max:
-                self.embedding_max = i
 
         value_map = {}
         for i, val in enumerate(values):
@@ -149,6 +151,26 @@ class StateSpace:
             embedding encoded representation of the state value
         '''
         state = self[id]
+        value_map = state['value_map_']
+        value_idx = value_map[value]
+
+        one_hot = np.zeros((1, 1), dtype=np.float32)
+        one_hot[0, 0] = value_idx
+        return one_hot
+
+    """
+        def embedding_encode(self, id, value):
+        '''
+        Embedding index encode the specific state value
+
+        Args:
+            id: global id of the state
+            value: state value
+
+        Returns:
+            embedding encoded representation of the state value
+        '''
+        state = self[id]
         size = state['size']
         value_map = state['value_map_']
         value_idx = value_map[value]
@@ -156,6 +178,7 @@ class StateSpace:
         one_hot = np.zeros((1, size), dtype=np.float32)
         one_hot[np.arange(1), value_idx] = value_idx + 1
         return one_hot
+    """
 
     def get_state_value(self, id, index):
         '''
@@ -184,14 +207,51 @@ class StateSpace:
             list of state values
         '''
         state_values = []
-        for id, state_one_hot in enumerate(state_list):
-            state_val_idx = np.argmax(state_one_hot, axis=-1)[0]
+        for id, state_value in enumerate(state_list):
+            state_val_idx = state_value[0, 0]
             value = self.get_state_value(id % 2, state_val_idx)
             state_values.append(value)
 
         return state_values
 
-    def one_hot_encode_child(self, child):
+    """
+        def parse_state_space_list(self, state_list):
+        '''
+        Parses a list of one hot encoded states to retrieve a list of state values
+
+        Args:
+            state_list: list of one hot encoded states
+
+        Returns:
+            list of state values
+        '''
+        state_values = []
+        for id, state_value_ids in enumerate(state_list):
+            state_val_idx = np.argmax(state_one_hot, axis=-1)[0]
+            value = self.get_state_value(id % 2, state_val_idx)
+            state_values.append(value)
+
+        return state_values
+    """
+
+    def entity_encode_child(self, child):
+        '''
+        Perform encoding for all blocks in a cell
+
+        Args:
+            child: a list of blocks (which forms one cell / layer)
+
+        Returns:
+            list of one hot encoded blocks of the cell
+        '''
+        encoded_child = []
+        for i, val in enumerate(child):
+            encoded_child.append(self.embedding_encode(i % 2, val))
+
+        return encoded_child
+
+    """
+        def entity_encode_child(self, child):
         '''
         Perform one hot encoding for all blocks in a cell
 
@@ -206,6 +266,7 @@ class StateSpace:
             encoded_child.append(self.embedding_encode(i % 2, val))
 
         return encoded_child
+    """
 
     def prepare_initial_children(self):
         '''
@@ -298,7 +359,7 @@ class StateSpace:
         for id, action in enumerate(actions):
             state = self[id]
             name = state['name']
-            vals = [(n, p) for n, p in zip(state['values'], *action)]
+            vals = [(self.get_state_value(id % 2, p), p) for n, p in zip(state['values'], *action)]
             print("%s : " % name, vals)
         print()
 
@@ -324,19 +385,61 @@ class StateSpace:
         return total
 
 
-class Encoder:
+class Controller(tf.keras.Model):
+
+    def __init__(self, controller_cells, embedding_dim,
+                 input_embedding_max, actions_embedding_max):
+        super(Controller, self).__init__(name='EncoderRNN')
+
+        self.controller_cells = controller_cells
+        self.embedding_dim = embedding_dim
+        self.input_embedding_max = input_embedding_max
+        self.actions_embedding_max = actions_embedding_max
+
+        self.input_embedding = tf.keras.layers.Embedding(input_embedding_max + 1, embedding_dim)
+        self.operators_embedding = tf.keras.layers.Embedding(actions_embedding_max + 1, embedding_dim)
+        self.rnn = tf.keras.layers.CuDNNLSTM(controller_cells, return_state=True)
+        self.rnn_score = tf.keras.layers.Dense(1, activation='sigmoid')
+
+    def call(self, inputs_operators, states=None, training=None, mask=None):
+        inputs, operators = self._get_inputs_and_operators(inputs_operators)  # extract the data
+
+        if states is None:  # initialize the state vectors
+            states = self.rnn.get_initial_state(inputs)
+            states[0] = tf.to_float(states[0])
+            states[1] = tf.to_float(states[1])
+
+        embed_inputs = self.input_embedding(inputs)
+        embed_ops = self.operators_embedding(operators)
+
+        embed = tf.concat([embed_inputs, embed_ops], axis=-1)  # concatenate the embeddings
+
+        out = self.rnn(embed, initial_state=states)
+        out, h, c = out  # unpack the outputs and states
+        score = self.rnn_score(out)
+
+        return [score, [h, c]]
+
+    def _get_inputs_and_operators(self, inputs_operators):
+        inputs = inputs_operators[:, 0::2]  # even place data
+        operators = inputs_operators[:, 1::2]  # odd place data
+
+        return inputs, operators
+
+
+class ControllerManager:
     '''
-    Utility class to manage the RNN Encoder
+    Utility class to manage the RNN Controller
     '''
 
-    def __init__(self, policy_session, state_space,
+    def __init__(self, state_space,
                  B=5, K=256,
                  train_iterations=10,
                  reg_param=0.001,
                  controller_cells=32,
                  embedding_dim=20,
+                 input_B=None,
                  restore_controller=False):
-        self.policy_session = policy_session  # type: tf.Session
 
         self.state_space = state_space  # type: StateSpace
         self.state_size = self.state_space.size
@@ -349,17 +452,23 @@ class Encoder:
         self.train_iterations = train_iterations
         self.controller_cells = controller_cells
         self.reg_strength = reg_param
+        self.input_B = input_B
         self.restore_controller = restore_controller
 
         self.children_history = None
         self.score_history = None
+
+        timestr = time.strftime("%Y-%m-%d-%H-%M-%S")
+        self.logdir = 'logs/%s' % timestr
+        # self.summary_writer = tf.contrib.summary.create_file_writer(self.logdir)
+        # self.summary_write.set_as_default()
 
         self.build_policy_network()
 
     def get_actions(self, top_k=None):
         '''
         Gets a one hot encoded action list, either from random sampling or from
-        the Encoder RNN
+        the ControllerManager RNN
 
         Args:
             top_k: Number of models to return
@@ -374,99 +483,64 @@ class Encoder:
 
         actions = []
         for model in models:
-            encoded_model = self.state_space.one_hot_encode_child(model)
+            encoded_model = self.state_space.entity_encode_child(model)
             actions.append(encoded_model)
 
         return actions
 
     def build_policy_network(self):
-        with self.policy_session.as_default():
-            K.set_session(self.policy_session)
+        if tf.test.is_gpu_available():
+            device = '/gpu:0'
+        else:
+            device = '/cpu:0'
 
-            with tf.name_scope('controller'):
-                with tf.variable_scope('policy_network'):
-                    # state input is the first input fed into the controller RNN.
-                    # the rest of the inputs are fed to the RNN internally
-                    with tf.name_scope('state_input'):
-                        # state_input = tf.placeholder(dtype=tf.float32, shape=(1, None, 1), name='state_input')
-                        state_input = tf.placeholder(dtype=tf.int32, shape=(None, None), name='state_input')
+        self.device = device
 
-                    self.state_input = state_input
+        self.global_step = tf.train.get_or_create_global_step()
 
-                    with tf.name_scope('embedding'):
-                        # embedding max + 1 is done as 0th position should be the "default" value for that time step
-                        embedding_weights = tf.get_variable('state_embeddings',
-                                                     shape=[self.state_space.embedding_max + 1, self.embedding_dim],
-                                                     initializer=tf.initializers.random_uniform(-1., 1.))
-                        embeddings = tf.nn.embedding_lookup(embedding_weights, state_input)
+        learning_rate = tf.train.exponential_decay(0.001, self.global_step,
+                                                   500, 0.98, staircase=True)
 
-                    # we can use LSTM as the controller as well
-                    lstm_cell = tf.nn.rnn_cell.LSTMCell(self.controller_cells)
-                    cell_state = lstm_cell.zero_state(batch_size=1, dtype=tf.float32)
+        if self.restore_controller and self.input_B is not None:
+            input_B = self.input_B
+        else:
+            input_B = self.state_space.inputs_embedding_max
 
-                    # initially, cell input will be 1st state input
-                    cell_input = embeddings
+        with tf.device(device):
+            self.controller = Controller(self.controller_cells,
+                                         self.embedding_dim,
+                                         input_B,
+                                         self.state_space.operator_embedding_max)
 
-                    # we provide a flat list of chained input-output to the RNN
-                    with tf.name_scope('controller_input'):
-                        # feed the ith layer input (i-1 layer output) to the RNN
-                        outputs, final_state = tf.nn.dynamic_rnn(lstm_cell,
-                                                                 cell_input,
-                                                                 initial_state=cell_state,
-                                                                 dtype=tf.float32)
+            self.optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
 
-                        # add a new classifier for each layers output
-                        regressor = tf.layers.dense(outputs[:, -1, :], units=1, name='rnn_scorer')
-                        self.rnn_score = tf.nn.sigmoid(regressor)
+        self.saver = tf.train.Checkpoint(controller=self.controller,
+                                         optimizer=self.optimizer,
+                                         global_step=self.global_step)
 
-            with tf.name_scope('optimizer'):
-                self.global_step = tf.Variable(0, trainable=False)
-                starter_learning_rate = 0.001
-                learning_rate = tf.train.exponential_decay(starter_learning_rate, self.global_step,
-                                                           500, 0.98, staircase=True)
+        if self.restore_controller:
+            path = tf.train.latest_checkpoint('weights/')
 
-                tf.summary.scalar('learning_rate', learning_rate)
-                self.optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
+            if path is not None and tf.train.checkpoint_exists(path):
+                print("Loading Controller Checkpoint !")
+                self.saver.restore(path)
 
-            policy_net_variables = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='policy_network')
+    def loss(self, real_acc, rnn_scores):
 
-            with tf.name_scope('losses'):
-                self.labels = tf.placeholder(dtype=tf.float32, shape=(None, 1), name='cell_label')
+        # RNN predicted accuracies
+        rnn_score_loss = tf.losses.mean_squared_error(real_acc, rnn_scores)
 
-                l2_loss = tf.losses.mean_squared_error(self.labels, self.rnn_score)
-                tf.summary.scalar('l2 loss', tf.reduce_mean(l2_loss))
+        # Regularization of model
+        params = self.controller.trainable_variables
+        reg_loss = tf.reduce_sum([tf.nn.l2_loss(x) for x in params])
 
-                reg_loss = tf.reduce_sum([tf.reduce_sum(tf.square(x)) for x in policy_net_variables])  # Regularization
+        total_loss = rnn_score_loss + self.reg_strength * reg_loss
 
-                # sum up policy gradient and regularization loss
-                self.total_loss = l2_loss + self.reg_strength * reg_loss
-                tf.summary.scalar('total_loss', self.total_loss)
-
-                # training update
-                with tf.name_scope("train_policy_network"):
-                    # apply gradients to update policy network
-                    self.train_op = self.optimizer.minimize(self.total_loss, global_step=self.global_step)
-
-            self.summaries_op = tf.summary.merge_all()
-
-            timestr = time.strftime("%Y-%m-%d-%H-%M-%S")
-            filename = 'logs/%s' % timestr
-
-            self.summary_writer = tf.summary.FileWriter(filename, graph=self.policy_session.graph)
-
-            self.policy_session.run(tf.global_variables_initializer())
-            self.saver = tf.train.Saver(max_to_keep=1)
-
-            if self.restore_controller:
-                path = tf.train.latest_checkpoint('weights/')
-
-                if path is not None and tf.train.checkpoint_exists(path):
-                    print("Loading Encoder Checkpoint !")
-                    self.saver.restore(self.policy_session, path)
+        return total_loss
 
     def train_step(self, rewards):
         '''
-        Perform a single train step on the Encoder RNN
+        Perform a single train step on the ControllerManager RNN
 
         Returns:
             final training loss
@@ -503,29 +577,33 @@ class Encoder:
 
                 for id, (child, score) in enumerate(zip(children[ids], scores[ids])):
                     child = child.tolist()
-                    state_list = self.state_space.one_hot_encode_child(child)
+                    state_list = self.state_space.entity_encode_child(child)
                     state_list = np.concatenate(state_list, axis=-1).astype('int32')
 
-                    # feed in the child model and the score
-                    feed_dict = {
-                        self.state_input: state_list,
-                        self.labels: score.reshape((1, 1)),
-                    }
+                    with tf.device(self.device):
+                        state_list = tf.convert_to_tensor(state_list)
 
-                    with self.policy_session.as_default():
-                        K.set_session(self.policy_session)
+                        with tf.GradientTape() as tape:
+                            rnn_scores, states = self.controller(state_list, states=None)
+                            acc_scores = score.reshape((1, 1))
 
-                        _, loss, summary, global_step = self.policy_session.run(
-                            [self.train_op, self.total_loss, self.summaries_op,
-                             self.global_step],
-                            feed_dict=feed_dict)
+                            total_loss = self.loss(acc_scores, rnn_scores)
 
-                        self.summary_writer.add_summary(summary, global_step)
-                        self.saver.save(self.policy_session, save_path='weights/controller.ckpt', global_step=self.global_step)
+                        grads = tape.gradient(total_loss, self.controller.trainable_variables)
+                        grad_vars = zip(grads, self.controller.trainable_variables)
 
-                print("Controller: Finished training epoch %d / %d of B = %d / %d" % (current_epoch + 1, self.train_iterations, dataset_id + 1, self.b_))
+                        self.optimizer.apply_gradients(grad_vars, self.global_step)
 
-        return loss
+                    loss += total_loss.numpy().sum()
+
+                print("Controller: Finished training epoch %d / %d of B = %d / %d" % (
+                    current_epoch + 1, self.train_iterations,
+                    dataset_id + 1, self.b_))
+
+        # save weights
+        self.saver.save('weights/controller.ckpt')
+
+        return loss.mean()
 
     def update_step(self):
         '''
@@ -533,50 +611,49 @@ class Encoder:
         of larger number of blocks in each cell
         '''
         if self.b_ + 1 <= self.B:
-            with self.policy_session.as_default():
-                K.set_session(self.policy_session)
 
-                self.b_ += 1
-                models_scores = []
+            self.b_ += 1
+            models_scores = []
 
-                # iterate through all the intermediate children
-                for i, intermediate_child in enumerate(self.state_space.prepare_intermediate_children(self.b_)):
-                    state_list = self.state_space.one_hot_encode_child(intermediate_child)
-                    state_list = np.concatenate(state_list, axis=-1).astype('int32')
+            # iterate through all the intermediate children
+            for i, intermediate_child in enumerate(self.state_space.prepare_intermediate_children(self.b_)):
+                state_list = self.state_space.entity_encode_child(intermediate_child)
+                state_list = np.concatenate(state_list, axis=-1).astype('int32')
 
-                    # score the child
-                    feed_dict = {
-                        self.state_input: state_list,
-                    }
+                state_list = tf.convert_to_tensor(state_list)
 
-                    score = self.policy_session.run(self.rnn_score, feed_dict=feed_dict)
-                    score = score[0, 0]
+                # score the child
+                score, _ = self.controller(state_list, states=None)
+                score = score[0, 0].numpy()
 
-                    # preserve the child and its score
-                    models_scores.append([intermediate_child, score])
+                # preserve the child and its score
+                models_scores.append([intermediate_child, score])
 
-                    with open('scores_%d.csv' % (self.b_), mode='a+', newline='') as f:
-                        writer = csv.writer(f)
-                        data = [score]
-                        data.extend(intermediate_child)
-                        writer.writerow(data)
+                with open('scores_%d.csv' % (self.b_), mode='a+', newline='') as f:
+                    writer = csv.writer(f)
+                    data = [score]
+                    data.extend(intermediate_child)
+                    writer.writerow(data)
 
-                    if (i + 1) % 500 == 0:
-                        print("Scored %d models. Current model score = %0.4f" % (i + 1, score))
+                if (i + 1) % 500 == 0:
+                    print("Scored %d models. Current model score = %0.4f" % (i + 1, score))
 
-                # sort the children according to their score
-                models_scores = sorted(models_scores, key=lambda x: x[1], reverse=True)
+            # sort the children according to their score
+            models_scores = sorted(models_scores, key=lambda x: x[1], reverse=True)
 
-                # account for case where there are fewer children than K
+            # account for case where there are fewer children than K
+            if self.K is not None:
                 children_count = min(self.K, len(models_scores))
+            else:
+                children_count = len(models_scores)
 
-                # take only the K highest scoring children for next iteration
-                children = []
-                for i in range(children_count):
-                    children.append(models_scores[i][0])
+            # take only the K highest scoring children for next iteration
+            children = []
+            for i in range(children_count):
+                children.append(models_scores[i][0])
 
-                # save these children for next round
-                self.state_space.update_children(children)
+            # save these children for next round
+            self.state_space.update_children(children)
         else:
             print()
             print("No more updates necessary as max B has been reached !")

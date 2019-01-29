@@ -37,15 +37,15 @@ for i in range(len(lines)):
 points = list(range(len(lines)))
 scores = [line[0] for line in lines]
 scores = np.array(scores)
-std = np.std(scores)
+# std = np.std(scores)
 
 lines = sorted(lines, key=lambda x: x[0], reverse=True)
 
-for line in lines:
-    print(line[0], line[1:])
+for i, line in enumerate(lines):
+    print(i, line[0], line[1:])
 
 plt.scatter(points, scores)
-plt.fill_between(points, scores + std, scores - std, alpha=0.3)
+# plt.fill_between(points, scores + std, scores - std, alpha=0.3)
 plt.xlabel('Model Index')
 plt.ylabel('val-acc')
 plt.title('Accuracy over all trained models')
