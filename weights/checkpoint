@@ -1,0 +1,2 @@
+model_checkpoint_path: "controller.ckpt-3"
+all_model_checkpoint_paths: "controller.ckpt-3"
