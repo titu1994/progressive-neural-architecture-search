@@ -9,6 +9,10 @@ from tensorflow.python.keras.layers import BatchNormalization, GlobalAveragePool
 class Identity(Model):
 
     def __init__(self, filters, strides):
+        '''
+        Performs a Pointwise Conv to preserve the stride and number of channels,
+        or simply adds an identity connection.
+        '''
         super(Identity, self).__init__()
 
         if strides == (2, 2):
@@ -24,6 +28,9 @@ class Identity(Model):
 class SeperableConvolution(Model):
 
     def __init__(self, filters, kernel, strides):
+        '''
+        Constructs a Seperable Convolution - Batch Normalization - Relu block.
+        '''
         super(SeperableConvolution, self).__init__()
 
         self.conv = SeparableConv2D(filters, kernel, strides=strides, padding='same',
@@ -39,6 +46,9 @@ class SeperableConvolution(Model):
 class Convolution(Model):
 
     def __init__(self, filters, kernel, strides):
+        '''
+        Constructs a Spatial Convolution - Batch Normalization - Relu block.
+        '''
         super(Convolution, self).__init__()
 
         self.conv = Conv2D(filters, kernel, strides=strides, padding='same',
@@ -54,6 +64,9 @@ class Convolution(Model):
 class StackedConvolution(Model):
 
     def __init__(self, filter_list, kernel_list, stride_list):
+        '''
+        Constructs a stack of Convolution blocks that are chained together.
+        '''
         super(StackedConvolution, self).__init__()
 
         assert len(filter_list) == len(kernel_list) and len(kernel_list) == len(stride_list), "List lengths must match"
@@ -76,6 +89,9 @@ class StackedConvolution(Model):
 class Pooling(Model):
 
     def __init__(self, type, size, strides):
+        '''
+        Constructs a pooling layer (average or max).
+        '''
         super(Pooling, self).__init__()
 
         if type == 'max':

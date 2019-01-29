@@ -15,6 +15,12 @@ from ops import Dense
 class ModelGenerator(Model):
 
     def __init__(self, actions):
+        '''
+        Utility Model class to construct child models provided with an action list.
+        
+        # Args:
+            actions: list of [input; action] pairs that define the cell. 
+        '''
         super(ModelGenerator, self).__init__()
 
         self.B = len(actions) // 4
@@ -55,12 +61,7 @@ class ModelGenerator(Model):
         if B == 1:
             left = self.parse_action(filters, action_list[0][1], strides=stride)
             right = self.parse_action(filters, action_list[1][1], strides=stride)
-
-            # register params
-            # setattr(self, '%d_left' % (self.global_counter), left)
-            # setattr(self, '%d_right' % (self.global_counter), right)
-            # self.global_counter += 1
-
+    
             return [left, right]
 
         # else concatenate all the intermediate blocks
@@ -68,17 +69,9 @@ class ModelGenerator(Model):
         for i in range(B):
             left_action = self.parse_action(filters, action_list[i * 2][1], strides=stride)
             right_action = self.parse_action(filters, action_list[i * 2 + 1][1], strides=stride)
-            # action = concatenate([left_action, right_action], axis=-1)
-
-            # register params
-            # setattr(self, '%d_left' % (self.global_counter), left_action)
-            # setattr(self, '%d_right' % (self.global_counter), right_action)
-            # self.global_counter += 1
-
+            
             actions.extend([left_action, right_action])
 
-        # concatenate the final blocks as well
-        # op = concatenate(actions, axis=-1)
         return actions
 
     def parse_action(self, filters, action, strides=(1, 1)):
@@ -86,13 +79,13 @@ class ModelGenerator(Model):
         Parses the input string as an action. Certain cases are handled incorrectly,
         so that model can still be built, albeit not with original specification
 
-        Args:
+        # Args:
             ip: input tensor
             filters: number of filters
             action: action string
             strides: stride to reduce spatial size
 
-        Returns:
+        # Returns:
             a tensor with an action performed
         '''
         # applies a 3x3 separable conv

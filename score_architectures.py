@@ -1,14 +1,8 @@
 import numpy as np
-import csv
-from sklearn.model_selection import train_test_split
 
 import tensorflow as tf
-from tensorflow.python.keras.datasets import cifar10, cifar100
-from tensorflow.python.keras.utils import to_categorical
 
 from encoder import ControllerManager, StateSpace
-from manager import NetworkManager
-from model import ModelGenerator
 
 tf.enable_eager_execution()
 
