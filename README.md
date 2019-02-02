@@ -105,7 +105,7 @@ I tried a toy CNN model with 2 CNN cells the a custom search space, train for ju
 All models configuration strings can be ranked using `rank_architectures.py` script to parse train_history.csv, or you can use
 `score_architectures.py` to pseudo-score all combinations of models for all values of B, and then pass these onto `rank_architectures.py` to approximate the scores that they would obtain.
 
-<img src='https://github.com/titu1994/progressive-neural-architecture-search/blob/master/images/pnas.PNG?raw=true' height='100%' width='100%'>
+<img src='https://github.com/titu1994/progressive-neural-architecture-search/blob/master/images/pnas.png?raw=true' height='100%' width='100%'>
 
 
 # Requirements
