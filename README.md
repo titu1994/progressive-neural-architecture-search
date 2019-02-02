@@ -109,6 +109,10 @@ All models configuration strings can be ranked using `rank_architectures.py` scr
 
 <img src='https://github.com/titu1994/progressive-neural-architecture-search/blob/master/images/pnas.png?raw=true' height='100%' width='100%'>
 
+After sorting using the `-sort` argument in `rank_architectures.py`, we get the following of the same data as above.
+
+<img src='https://github.com/titu1994/progressive-neural-architecture-search/blob/master/images/pnas_sorted.png?raw=true' height='100%' width='100%'>
+
 
 # Requirements
 - Tensorflow-gpu >= 1.12
