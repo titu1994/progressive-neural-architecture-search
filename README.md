@@ -89,7 +89,7 @@ python rank_architectures.py -f scores_*.csv
 - When you want to visualize not just the scored files, but also the training history - i.e. visualize everything at once: Simply pass * to the `-f` argument.
 
 ```bash
-python rank_architectures.py -f *
+python rank_architectures.py -f *.csv
 ```
 
 # Implementation details
