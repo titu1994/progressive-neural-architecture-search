@@ -8,6 +8,9 @@ Basic implementation of ControllerManager RNN from [Progressive Neural Architect
 - `NetworkManager` handles the training and reward computation of the children models
 
 # Usage
+
+## Training a Controller RNN
+
 At a high level : For full training details, please see `train.py`.
 ```python
 # construct a state space (the default operators are from the paper)
@@ -31,6 +34,64 @@ manager = NetworkManager(dataset, epochs=max_epochs, batchsize=batchsize)
   encoder.update()  # build next set of children to train in next trial, and sort them
 ```
 
+## Evaluating the Controller RNN on unseen model combinations
+
+Once the RNN Controller has been trained above the above approach, we can then score all possible model combinations.
+This might take a little while due to exponentially growing number of model configurations. This scoring procedure can be done
+simply in `score_architectures.py`.
+
+`score_architectures.py` has a similar setup to the `train.py` script, but you will notice that `B` parameter is larger (5) as
+compare to the `B` parameter in `train.py` (3). Any number of `B` can be provided, which will increase the maximum `width` of the Cells generated.
+
+In addition, if the search space is small enough, we can pass `K` (the maximum number of child models we want to compute) to be `None`. In doing so, *all* possible child models will be produced and scored by the Controller RNN.
+
+**Note**: There is an additional parameter `INPUT_B`. This is the `B` parameter with which the RNN was trained. Without this,
+the Controller RNN cannot know the size of the Input Embedding to create, and defaults to the current `B`. This in turn causes an issue when loading the weights (as the original embedding would have dimensions `[B, EMBEDDING_DIM]`.
+
+```bash
+python score_architectures.py
+```
+
+## Visualizing the results
+
+Finally, we can visualize the results obtained by the Controller RNN and scored by the `score_architecture.py` script.
+
+We do so by using the `rank_architectures.py` script, which accepts an argument `-f`. `-f` is a path(s) to the csv files that you want to rank and visualize.
+
+There are many ways of calling this script :
+
+- When you want to just visualize the history of the training procedure : Call it without any arguments.
+
+```bash
+python rank_architectures.py
+```
+
+- When you want to visualize a specific `score` file (to see the Controller RNN's predictions or actual evaluated model scores from training. These score files correspond to the `B` parameter in the paper, i.e. the width of the Cell generated.
+
+```bash
+python rank_architectures.py -f score_2.csv
+
+# Here we assume we want to rank the `score_2.csv` file.
+```
+
+- When you want to visualize multiple `score` files at once: pass them one after another. Note: The file names are sorted before display, so it will *always* show you scores in ascending order.
+
+```bash
+python rank_architectures.py -f score_5.csv score_3.csv score_2.csv
+```
+
+- When you want to visualize *all* score files at once: Pass the file name as `score_*.csv`. It uses glob internally, so all of its semantics will work here as well.
+
+```bash
+python rank_architectures.py -f scores_*.csv
+```
+
+- When you want to visualize not just the scored files, but also the training history - i.e. visualize everything at once: Simply pass * to the `-f` argument.
+
+```bash
+python rank_architectures.py -f *
+```
+
 # Implementation details
 This is a very limited project.
 - It is not a faithful re-implementation of the original paper. There are several small details not incorporated (like bias initialization, actually using the Hc-2 - Hcb-1 values etc)
@@ -43,6 +104,8 @@ I tried a toy CNN model with 2 CNN cells the a custom search space, train for ju
 
 All models configuration strings can be ranked using `rank_architectures.py` script to parse train_history.csv, or you can use
 `score_architectures.py` to pseudo-score all combinations of models for all values of B, and then pass these onto `rank_architectures.py` to approximate the scores that they would obtain.
+
+<img src='https://github.com/titu1994/progressive-neural-architecture-search/blob/master/images/pnas.PNG?raw=true' height='100%' width='100%'>
 
 
 # Requirements
