@@ -111,6 +111,8 @@ All models configuration strings can be ranked using `rank_architectures.py` scr
 # Requirements
 - Tensorflow-gpu >= 1.12
 - Scikit-learn (most recent available from pip)
+- (Optional) matplotlib - to visualize using `rank_architectures.py`
+- (Optional) mplcursors - to have annotated models when using `rank_architectures.py`.
 
 # Acknowledgements
 Code somewhat inspired by [wallarm/nascell-automl](https://github.com/wallarm/nascell-automl)
