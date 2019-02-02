@@ -58,12 +58,14 @@ Finally, we can visualize the results obtained by the Controller RNN and scored 
 
 We do so by using the `rank_architectures.py` script, which accepts an argument `-f`. `-f` is a path(s) to the csv files that you want to rank and visualize.
 
+Another argument is `-sort`, which will sort all the possible model combinations according to their predicted scores prior to plotting them. In doing so, if you have `mplcursors` setup, you can quickly glance at the top performing model architectures and their predicted scores.
+
 There are many ways of calling this script :
 
 - When you want to just visualize the history of the training procedure : Call it without any arguments.
 
 ```bash
-python rank_architectures.py
+python rank_architectures.py  # optional -sort
 ```
 
 - When you want to visualize a specific `score` file (to see the Controller RNN's predictions or actual evaluated model scores from training. These score files correspond to the `B` parameter in the paper, i.e. the width of the Cell generated.

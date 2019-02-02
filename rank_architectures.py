@@ -21,8 +21,12 @@ plt.style.use('seaborn-paper')
 parser = argparse.ArgumentParser(description='Plots the model architecture and it\'s respective '
                                              'score (whether obtained via training or predicted '
                                              'by the Controller RNN).')
+
 parser.add_argument('-f', type=str, default=None, nargs='+', help='List of paths to files which will be scores. '
                                                                   'Defaults to the train_history.csv file.')
+parser.add_argument('-sort', dest='sort', action='store_true')
+
+parser.set_defaults(sort=False)
 
 args = parser.parse_args()
 
@@ -76,13 +80,18 @@ for i in range(len(lines)):
 
 # prepare for plotting
 points = list(range(len(lines)))
-scores = [line[0] for line in lines]
-scores = np.array(scores)
 
 # normalize scores to color the points when plotting
 sorted_lines = sorted(lines, key=lambda x: x[0], reverse=True)
 max_score = float(sorted_lines[0][0])
 min_score = float(sorted_lines[-1][0])
+
+if args.sort:
+    sorted_lines.reverse()
+    lines = sorted_lines
+
+scores = [line[0] for line in lines]
+scores = np.array(scores)
 normalized_scores = (scores - min_score) / (max_score - min_score)
 
 plt.scatter(points, scores, c=normalized_scores, cmap='coolwarm')
