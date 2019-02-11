@@ -21,7 +21,7 @@ CHILD_MODEL_LR = 0.001  # learning rate for the child models.
 REGULARIZATION = 0  # regularization strength
 CONTROLLER_CELLS = 100  # number of cells in RNN controller
 RNN_TRAINING_EPOCHS = 10  # number of epochs to train the controller
-RESTORE_CONTROLLER = True  # restore controller to continue training
+RESTORE_CONTROLLER = False  # restore controller to continue training
 
 operators = ['3x3 dconv', '5x5 dconv', '7x7 dconv',
              '1x7-7x1 conv', '3x3 maxpool', '3x3 avgpool']  # use the default set of operators, minus identity and conv 3x3
